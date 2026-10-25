@@ -1,11 +1,22 @@
-import sqlite3
-from plaid.model.item_remove_request import ItemRemoveRequest
-from main import client
+"""Remove every Item at Plaid and delete all local data. Use before switching environments."""
+from dotenv import load_dotenv
 
-db = sqlite3.connect("ledgerline.db")
-for item_id, token, inst in db.execute(
-    "SELECT item_id, access_token, institution FROM items"
-).fetchall():
-    client.item_remove(ItemRemoveRequest(access_token=token))
-    print(f"Removed {inst} ({item_id})")
-db.close()
+load_dotenv()
+
+import db  # noqa: E402
+from providers import PlaidProvider, ProviderError  # noqa: E402
+
+db.init()
+provider = PlaidProvider()
+with db.secrets_conn() as s:
+    items = s.execute("SELECT item_id, access_token, institution FROM items").fetchall()
+
+for i in items:
+    try:
+        provider.remove_item(i["access_token"])
+    except ProviderError as e:
+        print(f"  (Plaid said {e.code}; deleting locally anyway)")
+    db.purge_item(i["item_id"])
+    print(f"Removed {i['institution']} ({i['item_id']})")
+
+print("Done. Delete data.db and secrets.db too if you want a completely clean slate.")
