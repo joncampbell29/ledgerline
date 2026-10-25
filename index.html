@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+<body>
+  <fieldset>
+    <legend>Products</legend>
+    <label><input type="checkbox" name="product" value="transactions" checked> transactions</label>
+    <label><input type="checkbox" name="product" value="liabilities"> liabilities</label>
+    <label><input type="checkbox" name="product" value="investments"> investments</label>
+  </fieldset>
+  <button id="link">Link account</button>
+  <pre id="out"></pre>
+
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  <script>
+    document.getElementById("link").onclick = async () => {
+      const products = [...document.querySelectorAll("input[name=product]:checked")]
+        .map((c) => c.value);
+      if (!products.length) return alert("Pick at least one product");
+
+      const qs = new URLSearchParams(products.map((p) => ["products", p]));
+      const res = await fetch(`/create_link_token?${qs}`, { method: "POST" });
+      const { link_token } = await res.json();
+
+      Plaid.create({
+        token: link_token,
+        onSuccess: async (public_token, metadata) => {
+          const r = await fetch("/exchange_public_token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              public_token,
+              institution: metadata.institution?.name,
+              products,
+            }),
+          });
+          document.getElementById("out").textContent =
+            "Linked: " + JSON.stringify(await r.json());
+        },
+      }).open();
+    };
+  </script>
+</body>
+</html>
