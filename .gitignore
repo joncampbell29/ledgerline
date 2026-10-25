@@ -221,4 +221,6 @@ __marimo__/
 
 
 # data
-*.db
+data/
+secrets/
+audit/

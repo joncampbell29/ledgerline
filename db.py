@@ -5,13 +5,19 @@ Two files, on purpose:
   data.db     Everything else. Safe to open read-only for the digest and the MCP server.
 
 Run `python db.py` to create both.
+
+Locations (both default to the current directory):
+  LEDGERLINE_DATA_DIR     holds data.db
+  LEDGERLINE_SECRETS_DIR  holds secrets.db. Keep it a separate folder so data.db's folder
+                          can be mounted read-only into the MCP container without the tokens.
 """
 import os
 import sqlite3
 from pathlib import Path
 
 DATA_DIR = Path(os.environ.get("LEDGERLINE_DATA_DIR", "."))
-SECRETS_DB = DATA_DIR / "secrets.db"
+SECRETS_DIR = Path(os.environ.get("LEDGERLINE_SECRETS_DIR", str(DATA_DIR)))
+SECRETS_DB = SECRETS_DIR / "secrets.db"
 DATA_DB = DATA_DIR / "data.db"
 
 SECRETS_SCHEMA = """
@@ -158,6 +164,7 @@ def data_conn(readonly=False):
 
 def init():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    SECRETS_DIR.mkdir(parents=True, exist_ok=True)
     with secrets_conn() as c:
         c.executescript(SECRETS_SCHEMA)
     os.chmod(SECRETS_DB, 0o600)

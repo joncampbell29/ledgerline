@@ -1,0 +1,37 @@
+# Folders on the host (create them once: mkdir -p data secrets audit)
+#   data/     data.db       balances, transactions, holdings. Safe to share read-only.
+#   secrets/  secrets.db    Plaid access tokens. Only api and sync ever see it.
+#   audit/    audit.jsonl   MCP tool-call log.
+#
+# Usage
+#   docker compose up -d --build        web app at http://127.0.0.1:8000 (Link page, /digest)
+#   docker compose run --rm sync        pull from Plaid now (schedule this with cron)
+#
+# MCP server: the client (Claude Code / Desktop) starts its own short-lived container
+# over stdio, so it isn't a compose service. Use absolute paths:
+#
+#   docker run -i --rm --network none --read-only --tmpfs /tmp \
+#     --cap-drop ALL --security-opt no-new-privileges \
+#     -v /home/YOU/ledgerline/data:/data:ro \
+#     -v /home/YOU/ledgerline/audit:/audit \
+#     ledgerline python mcp_server.py
+
+x-app: &app
+  image: ledgerline
+  env_file: .env
+  volumes:
+    - ./data:/data
+    - ./secrets:/secrets
+
+services:
+  api:
+    <<: *app
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"   # localhost only; never expose this publicly
+    restart: unless-stopped
+
+  sync:
+    <<: *app
+    command: ["python", "sync.py"]
+    profiles: ["jobs"]          # not started by `up`; run on demand or from cron

@@ -20,6 +20,8 @@ SOFT_ERRORS = {"PRODUCT_NOT_READY"}
 # Errors that mean the user has to reconnect the bank in Link (update mode).
 RELINK_ERRORS = {"ITEM_LOGIN_REQUIRED", "PENDING_EXPIRATION", "ACCESS_NOT_GRANTED",
                  "INVALID_ACCESS_TOKEN", "ITEM_NOT_FOUND"}
+# Errors that make the rest of this Item's steps pointless.
+STOP_ITEM_ERRORS = RELINK_ERRORS | {"NETWORK_ERROR"}
 
 
 def _now():
@@ -154,7 +156,7 @@ def sync_item(provider, item, today=None):
             steps[name] = "ok"
         except ProviderError as e:
             steps[name] = e.code
-            if e.code in RELINK_ERRORS:
+            if e.code in STOP_ITEM_ERRORS:
                 raise
 
     with db.data_conn() as data, db.secrets_conn() as secrets:
@@ -208,7 +210,7 @@ def sync_item(provider, item, today=None):
                         raise ProviderError(err)
             step("status", status)
         except ProviderError:
-            pass  # recorded in steps; the Item needs a relink, so stop here
+            pass  # recorded in steps; relink needed or Plaid unreachable, so stop here
 
         failed = {k: v for k, v in steps.items() if v != "ok"}
         if any(v in RELINK_ERRORS for v in failed.values()):

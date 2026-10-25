@@ -4,6 +4,7 @@ import os
 from datetime import date
 
 import plaid
+import urllib3
 from plaid import ApiException
 from plaid.api import plaid_api
 from plaid.model.accounts_get_request import AccountsGetRequest
@@ -65,6 +66,9 @@ class PlaidProvider:
                 body = {}
             raise ProviderError(body.get("error_code", f"HTTP_{e.status}"),
                                 body.get("error_message", str(e.reason))) from None
+        except (urllib3.exceptions.HTTPError, OSError) as e:
+            # DNS failure, timeout, connection refused: Plaid never answered.
+            raise ProviderError("NETWORK_ERROR", str(e)) from None
 
     # ---- Linking -----------------------------------------------------------
 

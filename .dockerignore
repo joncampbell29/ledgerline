@@ -1,0 +1,20 @@
+# Secrets and data never go into the image.
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+data/
+secrets/
+audit/
+audit.jsonl
+
+# Local tooling
+.venv/
+__pycache__/
+*.pyc
+.git/
+.claude/
+.pytest_cache/

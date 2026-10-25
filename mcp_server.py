@@ -3,14 +3,20 @@
     uv run mcp_server.py                        # stdio, for Claude Desktop / Claude Code
     claude mcp add ledgerline -- uv --directory ~/ledgerline run mcp_server.py
 
+In Docker, see the MCP section of compose.yaml: the container gets data/ read-only,
+a writable audit/ folder, and no network. secrets/ is never mounted.
+
 Requires mcp>=2 (MCPServer). On mcp 1.x the same code works with
 `from mcp.server.fastmcp import FastMCP as MCPServer`.
 """
+import functools
+import json
 import os
 import re
 import sqlite3
+import sys
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 # Clients launch this from an arbitrary cwd; default to the repo folder.
@@ -28,6 +34,8 @@ if not db.DATA_DB.exists():
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 QUERY_MAX_ROWS = 500
 QUERY_TIMEOUT_S = 5.0
+# Separate from the data folder so data.db can be mounted read-only.
+AUDIT_LOG = Path(os.environ.get("LEDGERLINE_AUDIT_DIR", str(db.DATA_DIR))) / "audit.jsonl"
 
 mcp = MCPServer(
     "ledgerline",
@@ -45,9 +53,37 @@ mcp = MCPServer(
 conn = db.data_conn(readonly=True)
 
 
+def audited(fn):
+    """Append one JSON line per tool call to audit.jsonl: time, tool, arguments, status,
+    duration and result size. Results themselves are not logged (they hold your data).
+    Never print() here: on stdio, stdout is the protocol channel."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        start = time.monotonic()
+        entry = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                 "tool": fn.__name__, "args": kwargs}
+        try:
+            result = fn(*args, **kwargs)
+            entry["status"] = "error" if isinstance(result, dict) and "error" in result else "ok"
+            entry["result_bytes"] = len(json.dumps(result, default=str))
+            return result
+        except Exception as e:
+            entry.update(status="exception", error=f"{type(e).__name__}: {e}")
+            raise
+        finally:
+            entry["ms"] = round((time.monotonic() - start) * 1000, 1)
+            try:
+                with open(AUDIT_LOG, "a") as f:
+                    f.write(json.dumps(entry, default=str) + "\n")
+            except OSError as e:  # don't fail the tool call over logging
+                print(f"audit log write failed: {e}", file=sys.stderr)
+    return wrapper
+
+
 # ---- Overview ----------------------------------------------------------------
 
 @mcp.tool(annotations=READ_ONLY)
+@audited
 def daily_digest(as_of: str | None = None) -> dict:
     """Everything in the user's daily report for one date (default today): net worth and
     change since yesterday, account balances, yesterday's transactions, 7-day spending vs
@@ -58,6 +94,7 @@ def daily_digest(as_of: str | None = None) -> dict:
 
 
 @mcp.tool(annotations=READ_ONLY)
+@audited
 def account_balances(days: int = 1, as_of: str | None = None) -> dict:
     """Net worth plus every account's latest balance and its change over the last `days`
     days. Credit card and loan balances are amounts owed (positive = debt)."""
@@ -66,6 +103,7 @@ def account_balances(days: int = 1, as_of: str | None = None) -> dict:
 
 
 @mcp.tool(annotations=READ_ONLY)
+@audited
 def connection_health() -> list[dict]:
     """Status of each linked institution. status != 'ok' or stale = true means the data
     for that institution may be out of date; tell the user before relying on it."""
@@ -75,6 +113,7 @@ def connection_health() -> list[dict]:
 # ---- Spending ----------------------------------------------------------------
 
 @mcp.tool(annotations=READ_ONLY)
+@audited
 def spending_by_category(start: str, end: str) -> list[dict]:
     """Net spending per category between two dates (inclusive), largest first.
     Excludes income, transfers between own accounts, and card/loan payments, so nothing is
@@ -83,6 +122,7 @@ def spending_by_category(start: str, end: str) -> list[dict]:
 
 
 @mcp.tool(annotations=READ_ONLY)
+@audited
 def spending_trend(days: int = 7, as_of: str | None = None) -> dict:
     """Spending per category for the last `days` days vs the `days` before that, with
     percent change. Use for "am I spending more than usual?" questions."""
@@ -90,6 +130,7 @@ def spending_trend(days: int = 7, as_of: str | None = None) -> dict:
 
 
 @mcp.tool(annotations=READ_ONLY)
+@audited
 def cash_flow(start: str, end: str) -> dict:
     """Income, spending and net between two dates (inclusive). Spending uses the same
     rules as spending_by_category."""
@@ -97,12 +138,14 @@ def cash_flow(start: str, end: str) -> dict:
 
 
 @mcp.tool(annotations=READ_ONLY)
+@audited
 def top_merchants(start: str, end: str, limit: int = 10) -> list[dict]:
     """Merchants with the most net spending between two dates (inclusive)."""
     return metrics.top_merchants(start, end, limit, conn)
 
 
 @mcp.tool(annotations=READ_ONLY)
+@audited
 def search_transactions(
     text: str | None = None,
     start: str | None = None,
@@ -157,6 +200,7 @@ def search_transactions(
 
 
 @mcp.tool(annotations=READ_ONLY)
+@audited
 def unusual_transactions(days: int = 7, as_of: str | None = None) -> list[dict]:
     """Charges in the last `days` days flagged by rules: large (>= $500), spike (> 2.5x the
     merchant's average), new_merchant (first charge in 180 days and >= $100), or duplicate
@@ -167,12 +211,14 @@ def unusual_transactions(days: int = 7, as_of: str | None = None) -> list[dict]:
 # ---- Debt --------------------------------------------------------------------
 
 @mcp.tool(annotations=READ_ONLY)
+@audited
 def upcoming_payments(days: int = 14) -> list[dict]:
     """Credit card and loan payments due in the next `days` days, soonest first."""
     return metrics.upcoming_payments(days, conn=conn)
 
 
 @mcp.tool(annotations=READ_ONLY)
+@audited
 def liabilities() -> list[dict]:
     """Latest details for every credit card and loan: balance, statement balance, minimum
     or monthly payment, due date, APR or interest rate, card utilization, mortgage escrow
@@ -183,6 +229,7 @@ def liabilities() -> list[dict]:
 # ---- Investments -------------------------------------------------------------
 
 @mcp.tool(annotations=READ_ONLY)
+@audited
 def portfolio(change_days: int = 1) -> dict:
     """Current holdings (ticker, quantity, price, value, cost basis, gain, weight) plus the
     portfolio's change over the last `change_days` days and the biggest movers."""
@@ -191,6 +238,7 @@ def portfolio(change_days: int = 1) -> dict:
 
 
 @mcp.tool(annotations=READ_ONLY)
+@audited
 def investment_activity(start: str, end: str) -> dict:
     """Buys, sells, dividends, contributions and fees between two dates (inclusive), with
     total dividends. Plaid sign convention: positive amount = cash left the account."""
@@ -200,6 +248,7 @@ def investment_activity(start: str, end: str) -> dict:
 # ---- Raw SQL -----------------------------------------------------------------
 
 @mcp.tool(annotations=READ_ONLY)
+@audited
 def describe_schema() -> str:
     """CREATE statements for every table. Call this before writing SQL for `query`."""
     rows = conn.execute(
@@ -227,6 +276,7 @@ qconn = _query_conn()
 
 
 @mcp.tool(annotations=READ_ONLY)
+@audited
 def query(sql: str, limit: int = 200) -> dict:
     """Run one read-only SELECT (or WITH ... SELECT) against the finance database.
     Use only when no other tool answers the question. Results are capped at `limit` rows
