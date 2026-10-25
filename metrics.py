@@ -292,7 +292,9 @@ def portfolio_change(days=1, as_of=None, movers=5, conn=None):
     total_now = sum(r["value"] or 0 for r in now)
     total_prev = sum(r["value"] or 0 for r in prev) if prev else None
 
-    key = lambda r: (r["account_id"], r["security_id"])
+    def key(r):
+        return r["account_id"], r["security_id"]
+
     prev_by = {key(r): r for r in prev}
     changes = []
     for r in now:

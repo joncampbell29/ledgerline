@@ -11,22 +11,17 @@ Requires mcp>=2 (MCPServer). On mcp 1.x the same code works with
 """
 import functools
 import json
-import os
 import re
 import sqlite3
 import sys
 import time
-from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
+from datetime import UTC, date, datetime, timedelta
 
-# Clients launch this from an arbitrary cwd; default to the repo folder.
-os.environ.setdefault("LEDGERLINE_DATA_DIR", str(Path(__file__).resolve().parent))
+from mcp.server.mcpserver import MCPServer
+from mcp.types import ToolAnnotations
 
-from mcp.server.mcpserver import MCPServer  # noqa: E402
-from mcp.types import ToolAnnotations  # noqa: E402
-
-import db  # noqa: E402
-import metrics  # noqa: E402
+import db  # paths resolve from the repo folder, so any cwd works
+import metrics
 
 if not db.DATA_DB.exists():
     raise SystemExit(f"{db.DATA_DB} not found. Run `python sync.py` first.")
@@ -35,7 +30,11 @@ READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 QUERY_MAX_ROWS = 500
 QUERY_TIMEOUT_S = 5.0
 # Separate from the data folder so data.db can be mounted read-only.
-AUDIT_LOG = Path(os.environ.get("LEDGERLINE_AUDIT_DIR", str(db.DATA_DIR))) / "audit.jsonl"
+AUDIT_LOG = db.AUDIT_DIR / "audit.jsonl"
+try:
+    db.AUDIT_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    pass  # read-only filesystem; the write below reports the failure
 
 mcp = MCPServer(
     "ledgerline",
@@ -60,7 +59,7 @@ def audited(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         start = time.monotonic()
-        entry = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        entry = {"ts": datetime.now(UTC).isoformat(timespec="seconds"),
                  "tool": fn.__name__, "args": kwargs}
         try:
             result = fn(*args, **kwargs)

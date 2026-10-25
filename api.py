@@ -11,13 +11,22 @@ Routes
   POST   /sync                    sync everything now
   GET    /digest                  HTML report
   GET    /digest.json             same data as JSON
+
+There is no login. Bind to localhost only (compose.yaml does) and never expose it publicly.
+Two guards cover attacks from web pages open in your own browser:
+  - Host must be in LEDGERLINE_ALLOWED_HOSTS (default localhost,127.0.0.1): blocks DNS rebinding.
+  - Requests that change things must come from this app's own origin: blocks cross-site POSTs.
 """
+import os
 from datetime import date
 from html import escape
+from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
 
 load_dotenv()
@@ -30,13 +39,30 @@ from providers import PlaidProvider, ProviderError  # noqa: E402
 db.init()
 provider = PlaidProvider()
 app = FastAPI(title="ledgerline")
+INDEX = Path(__file__).resolve().parent / "index.html"
+
+
+@app.middleware("http")
+async def same_origin_writes(request: Request, call_next):
+    origin = request.headers.get("origin")
+    if (request.method not in ("GET", "HEAD", "OPTIONS") and origin
+            and urlparse(origin).netloc != request.headers.get("host")):
+        return PlainTextResponse("cross-origin request blocked", status_code=403)
+    return await call_next(request)
+
+
+# Added last so it runs first.
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=os.environ.get("LEDGERLINE_ALLOWED_HOSTS", "localhost,127.0.0.1").split(","),
+)
 
 
 # ---- Linking -----------------------------------------------------------------
 
 @app.get("/")
 def index():
-    return FileResponse("index.html")
+    return FileResponse(INDEX)
 
 
 @app.post("/create_link_token")
@@ -44,7 +70,7 @@ def create_link_token(products: list[str] = Query(["transactions"])):
     try:
         return {"link_token": provider.create_link_token(products)}
     except ProviderError as e:
-        raise HTTPException(400, e.code)
+        raise HTTPException(400, e.code) from None
 
 
 class ExchangeBody(BaseModel):
@@ -58,7 +84,7 @@ def exchange_public_token(body: ExchangeBody, background: BackgroundTasks):
     try:
         item_id, token = provider.exchange_public_token(body.public_token)
     except ProviderError as e:
-        raise HTTPException(400, e.code)
+        raise HTTPException(400, e.code) from None
     with db.secrets_conn() as s:
         s.execute(
             "INSERT OR REPLACE INTO items (item_id, access_token, institution, products) "
@@ -90,7 +116,7 @@ def remove_item(item_id: str):
         provider.remove_item(row["access_token"])
     except ProviderError as e:
         if e.code not in sync.RELINK_ERRORS:  # already gone at Plaid is fine
-            raise HTTPException(400, e.code)
+            raise HTTPException(400, e.code) from None
     db.purge_item(item_id)
     return {"removed": item_id}
 
@@ -229,15 +255,15 @@ def render_digest(d):
                      for t in inv["transactions"][:20]], numeric=(3, 4))
             + "</section>")
 
-    loans = [l for l in d["liabilities"] if l["kind"] != "credit"]
+    loans = [x for x in d["liabilities"] if x["kind"] != "credit"]
     if loans:
         sections.append("<section><h2>Loans</h2>" + table(
             ["Account", "Balance", "Rate", "Next payment", "YTD interest"],
-            [[f'{escape(l["institution"] or "")} {escape(l["name"] or "")}', money(l["balance"]),
-              f'{l["interest_rate"]:.3f}%' if l["interest_rate"] else "—",
-              f'{money(l["next_payment_amount"])} on {l["next_payment_due_date"] or "—"}',
-              money(l["ytd_interest_paid"])]
-             for l in loans], numeric=(1, 2, 4)) + "</section>")
+            [[f'{escape(ln["institution"] or "")} {escape(ln["name"] or "")}', money(ln["balance"]),
+              f'{ln["interest_rate"]:.3f}%' if ln["interest_rate"] else "—",
+              f'{money(ln["next_payment_amount"])} on {ln["next_payment_due_date"] or "—"}',
+              money(ln["ytd_interest_paid"])]
+             for ln in loans], numeric=(1, 2, 4)) + "</section>")
 
     return PAGE.format(as_of=escape(d["as_of"]), body="\n".join(sections))
 

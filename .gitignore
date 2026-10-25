@@ -224,3 +224,8 @@ __marimo__/
 data/
 secrets/
 audit/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+audit.jsonl

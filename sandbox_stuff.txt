@@ -1,2 +1,0 @@
-fake phone: 415-555-0011
-fake code: 123456

@@ -1,15 +1,26 @@
 [project]
 name = "ledgerline"
 version = "0.1.0"
-description = "Add your description here"
+description = "Self-hosted personal finance aggregator: Plaid sync, daily digest, and a read-only MCP server for your agent"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "anthropic>=2.3.0",
     "fastapi>=0.162.0",
-    "keyring>=25.7.0",
     "mcp[cli]>=2.3.0",
     "plaid-python>=46.0.0",
     "python-dotenv>=1.2.4",
     "uvicorn>=0.54.0",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.2",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["B008"]  # FastAPI's Query(...) defaults are the intended idiom

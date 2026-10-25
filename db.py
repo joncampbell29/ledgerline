@@ -6,17 +6,20 @@ Two files, on purpose:
 
 Run `python db.py` to create both.
 
-Locations (both default to the current directory):
+Locations (default to data/, secrets/ and audit/ inside the repo, same as Docker):
   LEDGERLINE_DATA_DIR     holds data.db
   LEDGERLINE_SECRETS_DIR  holds secrets.db. Keep it a separate folder so data.db's folder
                           can be mounted read-only into the MCP container without the tokens.
+  LEDGERLINE_AUDIT_DIR    holds audit.jsonl (MCP tool-call log)
 """
 import os
 import sqlite3
 from pathlib import Path
 
-DATA_DIR = Path(os.environ.get("LEDGERLINE_DATA_DIR", "."))
-SECRETS_DIR = Path(os.environ.get("LEDGERLINE_SECRETS_DIR", str(DATA_DIR)))
+ROOT = Path(__file__).resolve().parent
+DATA_DIR = Path(os.environ.get("LEDGERLINE_DATA_DIR", ROOT / "data"))
+SECRETS_DIR = Path(os.environ.get("LEDGERLINE_SECRETS_DIR", ROOT / "secrets"))
+AUDIT_DIR = Path(os.environ.get("LEDGERLINE_AUDIT_DIR", ROOT / "audit"))
 SECRETS_DB = SECRETS_DIR / "secrets.db"
 DATA_DB = DATA_DIR / "data.db"
 

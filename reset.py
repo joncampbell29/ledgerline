@@ -19,4 +19,4 @@ for i in items:
     db.purge_item(i["item_id"])
     print(f"Removed {i['institution']} ({i['item_id']})")
 
-print("Done. Delete data.db and secrets.db too if you want a completely clean slate.")
+print(f"Done. Delete {db.DATA_DB} and {db.SECRETS_DB} too if you want a completely clean slate.")
